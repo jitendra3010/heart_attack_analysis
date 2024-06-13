@@ -1,0 +1,749 @@
+---
+title: "DSC441 Project: Heart Attack Analysis"
+author: "JITEN MISHRA"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r import, message=FALSE, include=FALSE}
+library(tidyverse)
+library(factoextra)
+library(psych)
+library(cluster)
+library(GGally)
+library(data.table)
+library(ggplot2)
+library(ggpubr)
+library(Amelia)
+library(corrplot)
+library(e1071)
+library(dplyr)
+library(caret)
+library(dendextend)
+library(rpart)
+library(rattle)
+library(pROC)
+
+```
+
+# Overview
+
+<li>This is data set from kaggle for **Heart Attack Analysis & Prediction Dataset** <li>
+<li>Data file used for Analysis  : Heart_Attack_Data.csv</li>
+<li>Link : https://www.kaggle.com/datasets/rashikrahmanpritom/heart-attack-analysis-prediction-dataset</li>
+
+This dataset contains various features related to individuals, such as age, gender, cholesterol levels, blood pressure, and other health-related attributes. The goal of the dataset is to analyze and predict the likelihood of a heart attack occurrence based on these factors.
+
+As per of our analysis here we will try to find a models predictive power of patient having chances of having a heart attack or not using various techniques of machine learning.
+
+# Data Desription
+
+The Data consists of below described variables
+
+1. Age : Age of the patient
+2. Sex : Sex of the patient
+3. exng: exercise induced angina (1 = yes; 0 = no)
+4. caa: number of major vessels (0-3)
+5. cp : Chest Pain type
+    <li>Value 1: typical angina</li>
+    <li>Value 2: atypical angina</li>
+    <li>Value 3: non-anginal pain</li>
+    <li>Value 4: asymptomatic</li>
+6. trtbps : resting blood pressure (in mm Hg)
+7. chol : cholesterol in mg/dl fetched via BMI sensor
+8. fbs : (fasting blood sugar > 120 mg/dl) (1 = true; 0 = false)
+9. restecg : resting electrocardiographic results
+    <li>Value 0: normal</li>
+    <li>Value 1: having ST-T wave abnormality (T wave inversions and/or ST elevation or depression of > 0.05 mV)</li>
+    <li>Value 2: showing probable or definite left ventricular hypertrophy by Estes' criteria</li>
+10. thalachh : maximum heart rate achieved
+11. oldpeak : Previous peak information
+12. thall : Thall Rate    
+13. slp : slope details
+14. output : 0= less chance of heart attack 1= more chance of heart attack
+
+**output is our Response/target variable**
+
+# a) Data Gathering and Integration
+
+The Data is loaded from the csv file.
+
+The Data consists of 303 records and includes both numerical and categorical/ordinal variables(represented as 1/0 and scale).
+
+```{r loadData, message=FALSE}
+
+# load the data
+haData <- read.csv("Heart_Attack_Data.csv")
+
+# count of records
+nrow(haData)
+
+```
+
+# b) Data Exploration
+
+In order to explore the data we first look at the description statistics with distributions.
+
+From the data looking at the distribution of each variable we see few variables at a different scale like age, trtbps, chol, thalachh. The distribution shows few normal distribution like age, trtbps, chol, thalachh( approx ) and some right skewed distribution like oldpeak.
+
+We look at the consolidated pairs panel plot to somewhat understand the distribution of the data.
+
+
+```{r explore, message=FALSE}
+
+# summary of data
+summary(haData)
+
+# describe data
+describe(haData)
+
+# plot of complete data
+pairs.panels(haData)
+
+```
+
+## b) (i) Visualization
+
+In order to visualize the data we convert few of the binary and continuous variables to meaningful values .
+
+From the visualization we see the male ratio is more in almost all variable comparisons and kind of gives us a visualization of Heart attack chances are more in Male , this is probably because of the proportion of male/female in the data , but we will not be looking at any regression technique here as we want to analyze and predict the likelihood of a heart attack.
+
+From the bar plot of Output we see that is data is almost evenly balanced, so we do not need to perform any oversampling/under-sampling techniques.
+
+The box plot of output vs age shows data of heart attack happening more in age range 44 ~ 58.
+
+Factors like chest pain, fast blood sugar are all high in males.
+
+```{r visualization, message=FALSE, fig.height=3.8}
+
+# copy the data for visualization
+haData_vis <- haData %>% mutate(fbs = if_else(fbs == 1, ">120", "<=120"),
+                                sex = if_else(sex == 1, "MALE", "FEMALE"),
+                                exng = if_else(exng == 1, "YES" ,"NO"),
+                                cp = if_else(cp == 1, "ATYPICA_ANGINA",
+                                             if_else(cp == 2, "NON-ANGINAL_PAIN"
+                                                     , "ASYMPTOMATIC")),
+                                restecg = if_else(restecg == 0, "NORMAL",
+                                                  if_else(restecg == 1,
+                                                          "ABNORMALITY",
+                                                          "PROBABLE_OR_DEFINITE")),
+                                output = if_else(output == 1, "ATTACK", "NoATTACK"))
+
+
+# summary of the data
+summary(haData_vis)
+
+# male female distribution
+sex_bar <- ggplot(haData_vis, aes(x = factor(sex))) +
+              geom_bar(color="black", fill="skyblue") +
+              labs(title = "Gender Bar Plot", x = "Gender", y = 'frequency')
+
+# fbs distribution
+fbs_bar <- ggplot(haData_vis, aes(x = factor(fbs))) +
+              geom_bar(color="black", fill="skyblue") +
+              labs(title = "Fast Blood Sugar Bar Plot", x = "fbs", y = 'frequency')
+
+# show the plot
+ggarrange(sex_bar, fbs_bar)
+
+# cp bar plot
+cp_bar <- ggplot(haData_vis, aes(x = factor(cp))) +
+              geom_bar(color="black", fill="skyblue") +
+              labs(title = "Chest Pain Type Bar plot", x = "Chest Pain type", y = 'frequency') +
+              theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# rest ecg bar plot
+restecg_bar <- ggplot(haData_vis, aes(x = factor(restecg))) +
+                geom_bar(color="black", fill="skyblue") +
+                labs(title = "Resting ECG Bar Plot", x = "restecg", y = 'frequency')+
+                theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# show the plot
+ggarrange(cp_bar, restecg_bar)
+
+# fasting blood sugar to gender
+ggplot(haData_vis, aes(x=fbs, fill=sex)) + 
+          geom_bar(position="stack") +
+          labs(title = "Fast Blood sugar/Gender Prop.", x = "Gender", y = 'Frequency')
+
+# chest pain type to gender
+ggplot(haData_vis, aes(x=cp, fill=sex)) + 
+          geom_bar(position="stack") +
+          labs(title = "Chest pain type/Gender Plot", x = "Chest Pain type", y = 'Frequency') +
+          theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+# output with gender stack plot
+ggplot(haData_vis, aes(x=output, fill=sex)) + 
+          geom_bar(position="stack") +
+          labs(title = "Output/Gender Plot", x = "Output", y = 'Frequency') +
+          theme(axis.text.x = element_text(angle = 30,hjust = 1))
+
+
+# output class bar plot
+ggplot(haData_vis, aes(x = output)) +
+    geom_bar(color="black", fill="skyblue") +
+    labs(title = "Output Bar plot", x = "Output", y = 'frequency')
+
+# age to output
+ggplot(haData_vis, aes(x= output, y = age)) +
+  geom_boxplot(color="black", fill="skyblue") +
+  labs(title = "Ouput to Age box plot", x="Output", y="Age")
+
+```
+
+## b) (ii) Correlation 
+
+In order to see the correlation we check on the data set with all everything numeric.
+
+From the correlation plot we kind of see some +ve correlation of cp, thalachh with output, age having some +ve correlation with few descriptors. We don't have any variable non correlated with nothing neither we see any variable that is highly correlated to everyone.
+
+
+```{r correlation, message=FALSE}
+# correlation
+corrplot(cor(haData), method = "ellipse", type="lower")
+
+```
+
+# c) Data Cleaning
+
+From the missing value analysis , we don't see any missing values that we need to take care of.
+
+We mutated the age into young, old, Adult to see which age group is effected with more of heart attack and we plotted the data , and we see that adult age is more prone to heart attacks.
+
+While visualizing the data we saw an outlier and investigated the record , but its not of much problem to us and we want to analyze every bit of the data and we leave it as is and see further how the model turns out.
+
+```{r cleaning, message=FALSE}
+
+# check for NA's
+haData_vis %>% map_int(~sum(is.na(.x)))
+
+# missing plot
+missmap(haData_vis)
+
+# Possible Outlier record
+haData_vis %>% filter(age==35,output=="NoATTACK")
+
+
+# covert variable to factors
+haData_vis$sex <- as.factor(haData_vis$sex)
+haData_vis$cp <- as.factor(haData_vis$cp)
+haData_vis$fbs <- as.factor(haData_vis$fbs)
+haData_vis$restecg <- as.factor(haData_vis$restecg)
+haData_vis$exng <- as.factor(haData_vis$exng)
+haData_vis$output <- as.factor(haData_vis$output)
+
+# summary of the data
+summary(haData_vis)
+
+# mutate the range of ages
+range<- haData_vis %>%
+          mutate(age_bins = cut(age, breaks=3,
+                                labels=c("Young","Adult","Old")))
+
+# head of mutated data
+head(range[,c(1,15)])
+
+# visualize output with age bin
+ggplot(range, aes(x=age_bins, fill=output)) + 
+          geom_bar(position="stack") +
+          labs(title = "Age Group/Output stac Plot", x = "Age Groups", y = 'Frequency') 
+          
+
+# drop age from the data
+range <- range[,-1]
+
+#summary of the data
+summary(range)
+
+```
+
+# d) Data Preprocessing
+
+As part of data preprocessing we normalized the data with center scale and then created dummies for the data.
+
+The normalized data will be used for various ML techniques and the dummies will be used for creating components as part of PCA analysis further down.
+```{r preprocess, message=FALSE}
+
+# normalization with center scale
+preproc1 <- preProcess(range, method=c("center", "scale"))
+# We have to call predict to fit our data based on preprocessing
+range_proc <- predict(preproc1, range)
+# Here we can see the standardized version of our dataset
+summary(range_proc)
+
+
+# dummy variable for the categorical
+dummyHa <- dummyVars(output ~., data = range_proc)
+# transformation to dummy variables and a dataframe
+dummiesHa <- as.data.frame(predict(dummyHa, newdata = range_proc))
+# head of data
+head(dummiesHa)
+
+
+```
+
+# e) Clustering 
+
+As part of clustering we will be performing k mean clustering and HAC clustering and for visualization we will be performing PCA on the dummy variable data.
+
+## e) (i) Principal component analysis
+**NOTE : Scaling is not required as we have already scaled the data**
+
+We perform PCA to get 2 dimensional data for visualization , as we have performed pca only for visualization we are not worried of selecting no.of components here. however PC11 captured variance ranging 91%.
+
+```{r pca, message=FALSE}
+
+# pca on the data set
+haPca <- prcomp(dummiesHa)
+summary(haPca)
+
+# Visualize the scree plot
+screeplot(haPca, npcs = 22, type="l") + title(xlab = "PCs")
+
+# reduced set of pc's
+preProc <- preProcess(dummiesHa, method="pca", pcaComp=2)
+haPcaReduced <- predict(preProc, dummiesHa)
+
+# adding the output column back
+haPcaReduced$output <- range$output
+
+# head of reduced pca
+head(haPcaReduced)
+
+```
+
+The scatter plot for the 2D PCA data is displayed below with color category of output. From the scatter plot
+we don't see a prominent distinct grouping rather its overlapped for PC1 and PC2, this is may be because the data might in id a different dimension.
+
+```{r pcaVis, message=FALSE}
+
+# scatter plot for type of wine on the PC
+ggplot(haPcaReduced, aes(x=PC1, y=PC2)) +
+      geom_point(aes(col=output)) +
+      labs(title = "PCA Plot Heart Attack ")
+
+```
+
+## e) (ii) K mean Clustering
+
+Looking at the above visualization we proceed with k mean clustering and try to see how it performs.
+
+From the knee and shilhouete plots we get information to select the k value as 2.
+
+We then perform the kmean with center as 2 and nstart 25 and displayed the model.
+
+
+```{r kmean, message=FALSE, fig.height=3.8}
+set.seed(3010)
+
+# Find the knee
+fviz_nbclust(dummiesHa, kmeans, method = "wss")
+
+# average silhouette
+fviz_nbclust(dummiesHa, kmeans, method = "silhouette")
+
+# Fit the data with nstarts 25
+fit <- kmeans(dummiesHa, centers = 2, nstart = 25)
+# Display the kmeans object information
+fit
+
+```
+
+From the visualization we see 2 clusters with overlaps same as we saw in our PCA visualization in 2 dimension. 
+
+```{r kmeanVis, message=FALSE}
+
+# Display the cluster plot
+fviz_cluster(fit, data = dummiesHa, main="Kmean 2 Cluster Plot")
+
+```
+
+For comparison we use the PCA to visualize the data for k mean cluster. From the comparison plot we kind of get similar result as the PCA visualization.
+
+```{r kmeanPcaVis , message=FALSE}
+
+# copy of the pca data
+rotated_data <- haPcaReduced
+
+# Assign kmean clusters labels as a new column
+rotated_data$Kmean_clusters = as.factor(fit$cluster)
+
+# Plot and color by kmean cluster label
+ggplot(rotated_data, aes(x=PC1, y=PC2)) +
+        geom_point(aes(col=Kmean_clusters)) +
+        labs(title = "Color Plot kmean cluster", col = "kmeanCluster")
+
+```
+
+## e) (iii) HAC Clustering
+
+We also perform a HAC clustering for comparison and we see 2 good clusters from the dendogram as we selected k = 2 from the knee and shiloutte plot above. 
+
+In this step we used the gower matrix to compute the distance matrix as we have both factors and numeric in the data, we use the method as average for computing the clustering model.
+
+```{r hac, message=FALSE}
+
+# Pass dataframe directly with metric = gower
+dist_mat_sw <- daisy(range_proc, metric = "gower")
+# fit the model
+hfit_sw <- hclust(dist_mat_sw, method = 'average')
+
+# convert to dendogram
+dend_sw <- as.dendrogram(hfit_sw)
+
+# color the branches
+coldend_sw <- color_branches(dend_sw, k = 2, col = c(1,2))
+# plot the dendogram
+plot(coldend_sw, main="2 Cluster Dendogram")
+
+```
+
+We build the model with 2 clusters here for HAC using cut-tree and the head of the data is displayed.
+
+```{r hac1, message=FALSE}
+
+# Build the new model with k =2
+h1_sw2 <- cutree(hfit_sw, k=2)
+
+head(h1_sw2)
+```
+
+We performed the visualization for HAC with the pca components and we see a almost similar kind of visualization as we saw in our previous steps having overlaps in 2-D.
+
+```{r hacPcaVis, message=FALSE}
+
+# Assign kmean clusters labels as a new column
+rotated_data$hac_clusters = as.factor(h1_sw2)
+
+# Plot and color by kmean cluster label
+ggplot(rotated_data, aes(x=PC1, y=PC2)) +
+        geom_point(aes(col=hac_clusters)) +
+        labs(title = "Color Plot HAC cluster", col = "HACCluster")
+
+```
+
+We then compare the clusters with actual labels with cross tabulation for both kmean and HAC, and we see some decent result with True positives and True negatives for HAC technique. We see the models predictive power of getting most of true positives is over 98% which is pretty decent  
+
+So as a conclusion we see HAC performed better in terms of cross tabulation evaluation with predicting the most +ve's and -ve's accurately.
+
+
+```{r modelEval, message=FALSE}
+
+# comparison to actual label
+result <- data.frame(Type = range$output, Kmeans = fit$cluster, hac = h1_sw2)
+# View the first 6 cases one by one
+head(result)
+
+# Crosstab for K Means
+result %>% group_by(Kmeans) %>% dplyr::select(Kmeans, Type) %>% table()
+
+# Crosstab for hac
+result %>% group_by(hac) %>% dplyr::select(hac, Type) %>% table()
+
+```
+
+
+# f) Classification
+
+For Classification we will be performing KNN and Decision Tree. 
+
+To proceed we take the preprocess data set(range) computed previously and then we divide the data to 70% training and 30% testing to proceed ahead.
+
+```{r trainTest, message=FALSE}
+
+set.seed(1234)
+
+# copy the data
+clasData <- range
+
+# Partition the data
+index = createDataPartition(y=clasData$output, p=0.7, list=FALSE)
+
+# get the train set as index
+train_set = clasData[index,]
+
+# get the test set
+test_set = clasData[-index,]
+
+# head of data
+head(clasData)
+
+```
+
+
+## f) (i) KNN
+
+We performed the KNN technique for classification using 10 fold cross validation with a grid search of rectangular and triangular with a euclidean and manhattan distance with a kmax of 3:9.
+
+We see the model reported a highest **accuracy of 79% and a kappa of 58%** with kmax = 9, distance = 1 and rectangular kernel.
+
+```{r knn, message=FALSE}
+
+set.seed(3010)
+
+# Set number of folds
+folds <- 10
+
+# Generate stratified indices (per fold list of indices, which are the row numbers)
+idx <- createFolds(train_set$output, folds, returnTrain = T)
+
+# evaluation method as cv
+ctrl <- trainControl(index = idx, method = 'cv', number = folds)
+
+# tuneGrid with the tuning parameters
+tuneGrid <- expand.grid(kmax = 3:9, kernel = c("rectangular","triangular"),
+                        distance = 1:2)
+
+# tune and fit the model with 10-fold cross validation,
+# standardization, and our specialized tune grid
+# preprocess is not required as we are using PC components
+kknn_fit <- train(output ~ .,data = train_set,
+                  method = 'kknn',
+                  trControl = ctrl,
+                  preProcess = c('center', 'scale'),
+                  tuneGrid = tuneGrid)
+
+# Printing trained model provides report
+kknn_fit
+
+```
+
+We plot the model accuracy and predicted the model with the test data and verified the Model performance.
+
+The test performance was reported as **accuracy 84% with a kappa of 68%**. We see the test accuracy slightly higher than the test which suggests that the model is generalizing well to unseen data.
+
+```{r knnPlot, message=FALSE}
+
+# plot the model accuracy
+plot(kknn_fit)
+
+# predict the model with test data
+pred_knnTest <- predict(kknn_fit, test_set)
+
+# display the confusion matrix
+confusionMatrix(as.factor(test_set$output), pred_knnTest)
+
+```
+
+## f) (ii) Decision Tree
+
+We perform another technique "Decision Tree" for classification and to do that we set a list of hyper parameters with the same train control and tried to capture the best model.
+
+The dataframe having all the details fro this iteration is displayed.
+
+And the best model was reported with 11 nodes having a **Test accuracy of 80% and a training accuracy of 84%** with minsplit =12 , max depth = 7 and maxbucket=12. Here we see the training accuracy is higher but there is not much significant difference which we should be worried about.
+
+
+```{r decTree, message=FALSE}
+
+# set the seed
+set.seed(3010)
+
+# initialize the set of hyper parameters
+hyper_data <- list(c(2,1,2),c(2,2,2),c(5,2,3),c(5,3,3),c(50,3,50),c(100,4,100),c(50,5,50),
+c(100,6,100),c(12,7,12),c(300,8,300),c(50,9,50),c(700,12,700),c(1000,25,1000))
+
+# initialize the dataframe
+comp_tbl <- data.frame()
+# length of the set of parameters
+len = length(hyper_data)
+
+for(i in 1:len){
+  # get the hyper data
+  minSp = hyper_data[i][[1]][[1]]
+  maxDp = hyper_data[i][[1]][[2]]
+  minBk = hyper_data[i][[1]][[3]]
+  
+  # create hyper parameter
+  hypers = rpart.control(minsplit = minSp, maxdepth = maxDp, minbucket = minBk)
+  
+  # build decision tree
+  cmpTree <- train(output ~ .,data = train_set, control = hypers,
+                    trControl = ctrl, method = "rpart1SE")
+  
+  # Train set confusion matrix
+  pred_train <- predict(cmpTree, train_set)
+  cfm_train <- confusionMatrix(train_set$output, pred_train)
+  
+  # Test set confusion matrix
+  pred_test <- predict(cmpTree, test_set)
+  cfm_test <- confusionMatrix(test_set$output, pred_test)
+  
+  # training accuracy
+  a_train <- cfm_train$overall[1]
+  # testing accuracy
+  a_test <- cfm_test$overall[1]
+  # Get number of nodes
+  nodes <- nrow(cmpTree$finalModel$frame)
+  
+  # Add rows to the table
+  comp_tbl <- comp_tbl %>% rbind(list(nodes, a_train, a_test, minSp, maxDp, minBk))
+  
+}
+
+# assign the column Names
+names(comp_tbl) <- c("Nodes", "TrainAccuracy", "TestAccuracy", "MinSplit",
+                     "MaxDepth", "MinBucket")
+
+# display the data
+comp_tbl
+
+```
+
+we then visualize the result to find a sweet spot for our model comparison and we see the train and test accuracy kind going hand in hand and then diverging towards the end which is kind of decent as per the predictive power of the model.
+
+```{r DTVis, message=FALSE}
+
+# Visualize with line plot
+ggplot(comp_tbl, aes(x=Nodes)) +
+  geom_line(aes(y = TrainAccuracy), color = "red") +
+  geom_line(aes(y = TestAccuracy), color="blue") +
+  ylab("Accuracy")
+
+```
+
+In order to pull the model out and visualize the tree, we perform the decision tree with the same set of parameters as reported in the extensive testing above.
+
+The accuracy of the model was reported as 84% in training and 80% in testing showing different measures of performance for the model.
+
+From the feature importance we see features like oldpeak, exercise include angina, slope, number of major vessels are some of the important factors affecting heart attack.
+
+```{r decTreeModel, message=FALSE}
+
+set.seed(3010)
+
+# create hyper parameter for 5 nodes
+hypers = rpart.control(minsplit =12, maxdepth = 7, minbucket = 12)
+# build decision tree
+flTree <- train(output ~ .,data = train_set, control = hypers,
+                    trControl = ctrl, method = "rpart1SE")
+
+# train set confusion matrix
+pred_train_fl <- predict(flTree, train_set)
+cfm_train_fl <- confusionMatrix(train_set$output, pred_train_fl)
+cfm_train_fl
+
+# test set confusion matrix
+pred_test_fl <- predict(flTree, test_set)
+cfm_test_fl <- confusionMatrix(test_set$output, pred_test_fl)
+cfm_test_fl
+
+# display the tree
+fancyRpartPlot(flTree$finalModel, caption="Decision Tree")
+
+# display the important features
+plot(varImp(flTree, scale=FALSE))
+
+```
+
+
+# g) Evaluation
+
+From the above technique we see knn performing slightly better with test accuracy **84%** so we go ahead with computing other evaluation techniques for KNN
+
+**(1) 2X2 Confusion Matrix for KNN**
+
+As we had predicted the model with the test set in the previous steps we display the confusion matrix here.
+
+From the confusion matrix we see the TP = 47 , TN = 29 , FN = 12, FP = 2.
+
+```{r eval, message=FALSE}
+
+# Generate confusion matrix on the prediction
+cmKnn = confusionMatrix(as.factor(test_set$output), pred_knnTest)
+cmKnn
+
+# confusion matrix of svm
+m = cmKnn$table
+
+```
+
+**(2) Precision and Recall for KNN**
+
+From the above confusion matrix we calculate the precision and recall manually and the result is same **96%** for precision and **80%** for Recall.(approx).
+
+Precision is about predicting the positive prediction value which about calculating all TruePositives / ( TruePositive + FalsePositives) and recall is same as sensitivity which is about calculating all TruePositives / ( TruePositive + FalseNegatives).
+
+```{r perfMeasure, message=FALSE}
+
+# precision TP/(TP+FP)
+precision = m[1,1]/(m[1,1]+m[1,2])
+precision # 0.9591837
+
+# recall TP/(TP+FN) (recall)
+recall = m[1,1]/(m[1,1]+m[2,1]) 
+recall # 0.7966102
+
+
+```
+
+**(3) ROC Curve for KNN**
+
+As per the ROC Curve the AUC value is reported at **89%**.
+
+A perfect classifier would have a ROC curve that passes through the top-left corner of the plot, indicating high sensitivity and low false positive rate across all thresholds. A random classifier, on the other hand, would produce a diagonal line from the bottom-left to the top-right of the plot.
+
+And here we see a pretty decent curve if not perfect.
+
+```{r roc, message=FALSE}
+
+# Get class probabilities for svm
+pred_prob <- predict(kknn_fit, test_set, type = "prob")
+head(pred_prob)
+
+# plot the ROC
+roc_obj <- roc((test_set$output), pred_prob[,1])
+plot(roc_obj, print.auc=TRUE)
+
+```
+
+**Conclusion:** 
+The performance metrics of a classifier can provide additional insights beyond just accuracy.
+
+Precision: Precision is the proportion of correctly predicted positive instances (true positives) out of all instances predicted as positive. A precision of 96% means that when knn classifier predicts a positive outcome, it is correct 96% of the time. This indicates that knn classifier has a low rate of false positives.
+
+Recall: Recall, also known as sensitivity or true positive rate, measures the proportion of actual positive instances that are correctly predicted by the classifier. With a recall of 80%, knn classifier is able to correctly identify 80% of the positive instances in the dataset. It indicates that the classifier has a moderate ability to avoid false negatives.
+
+AUC: The Area Under the ROC Curve (AUC) is a measure of the overall performance of a classifier. An AUC of 86% indicates that the classifier has good discrimination power in distinguishing between positive and negative instances. The higher the AUC, the better the classifier is at correctly ranking positive instances higher than negative instances.
+
+In comparison, accuracy measures the overall correctness of predictions, regardless of the class. With an accuracy of 84%, it indicates that the classifier correctly predicts the class label for 84% of instances in the dataset.
+
+Based on these performance metrics, the classifier seems to perform well in terms of precision, recall, and AUC. However, it's important to consider the specific requirements and objectives of a classification task. Depending on the application and the importance of false positives and false negatives, we may need to adjust the classification threshold or further optimize the model to achieve the desired balance between precision and recall.
+
+
+# h) Report
+
+As part of the process of analyzing this data set we performed the below task and each task is labeled and explained in this markdown sequentially as you went through this file.
+
+1. We performed **Data Gathering and Integration** by loading the data from the file , there was no integration step involved as we had just one data file.
+2. We then performed **Data Exploration** analyzing each and every variable , including distribution and correlations supported by multiple visualization plots to explain out initial hypothesis.
+3. As part of **Data cleaning** as we did not had any NA's we performed some additional visualization with some binning techniques and converted required variable to factors.
+4. As part of **Pre Processing** we normalized the data and created dummy variables for further analysis.
+5. Then we performed two **Clustering** techniques (kmean, hac) for which we also computed the PCA for visualizations.
+6. As part of **Classification** we performed two techniques( knn, Decision tree) and measured the model performance with accuracy over testing and training data.
+7. As part of **Evaluation** we computed the *confusion matrix* with manual computation of *Precision and Recall* and also projected the *ROC Plot*. and compared various performance measures with accuracy reported for the model.
+
+Overall we implemented all the techniques for the data set that we learnt in the course.
+
+## Overall Takeaway
+
+1. The dataset provided information about various variables related to heart health and potential risk factors for heart attacks.
+2. Through data exploration, we gained insights into the distribution and correlations among the variables, which helped in understanding the dataset better.
+3. Different Clustering techniques, namely k-means and hierarchical agglomerative clustering (HAC), helped us identify potential patterns or groups within the data.
+4. Classification techniques, including k-nearest neighbors (knn) and decision tree, helped us predict heart attack risk based on the available variables.
+5. With Model evaluation we learned measuring the performance metrics such as accuracy, precision, recall, and ROC plots to assess the effectiveness of the classification models.
+6. Overall, the analysis provided insights into the dataset's variables, relationships, and potential predictive power in identifying individuals at risk of heart attacks.
+
+The most interesting thing from the analysis was how we used a ROC curve to summarize the model discriminatory ability and how we used different techniques to achieve that.
+
+
+# i) Reflection
+
+From this course we learnt different ML techniques for analyzing a data set , techniques like clustering and classification were of much interest. We basically learned the Data science pipeline steps of analyzing which we followed in this project. During the process we did learn that 80% of our time goes with data cleaning an preprocesing and rest is 20%.
+We also learnt some ethics which we need to take note in out day today activities with respect to data science.
+
+After leaning these techniques it is now clear that Data Science is not Black Magic and it has to be done with right way and right techniques ;)
